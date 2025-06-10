@@ -1,0 +1,71 @@
+# kubectl create configmap healthcheck-script --from-file=min.py && kubectl apply -f min.yaml && kubectl wait --for=condition=Ready pod -l job-name=healthcheck,batch.kubernetes.io/job-completion-index="0" --timeout=300s && kubectl logs -f -l job-name=healthcheck,batch.kubernetes.io/job-completion-index="0"
+apiVersion: v1
+kind: Service
+metadata:
+  name: healthcheck-svc
+spec:
+  clusterIP: None
+  selector:
+    job-name: healthcheck
+  ports:
+  - port: 29500
+    name: dist-port
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: healthcheck
+spec:
+  completions: 2
+  parallelism: 2
+  completionMode: Indexed
+  template:
+    metadata:
+      labels:
+        job-name: healthcheck
+    spec:
+      containers:
+      - name: trainer
+        image: ghcr.io/standard-intelligence/healthcheck:latest
+        command: [ "/bin/bash", "-c" ]
+        args:
+        - |
+          set -x
+          torchrun \
+            --nnodes "2" \
+            --nproc_per_node "8" \
+            --rdzv-backend c10d \
+            --rdzv-endpoint healthcheck-0.healthcheck-svc:29500 \
+            /scripts/min.py
+        env:
+        - name: OMP_NUM_THREADS
+          value: "1"
+        ports:
+        - containerPort: 29500
+        resources:
+          requests:
+            nvidia.com/gpu: 8
+            nvidia.com/hostdev: 8
+            memory: "950Gi"
+            cpu: "64"
+          limits:
+            nvidia.com/gpu: 8
+            nvidia.com/hostdev: 8
+            memory: "1500Gi"
+            cpu: "64"
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: dshm
+        - mountPath: /scripts
+          name: script-volume
+      volumes:
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 512Gi
+        name: dshm
+      - name: script-volume
+        configMap:
+          name: healthcheck-script
+          defaultMode: 493
+      restartPolicy: Never
+      subdomain: healthcheck-svc
