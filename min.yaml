@@ -31,6 +31,7 @@ spec:
         args:
         - |
           set -x
+          sleep 10
           torchrun \
             --nnodes "2" \
             --nproc_per_node "8" \
